@@ -1,0 +1,15 @@
+version: "3.8"
+services:
+  joplin-api:
+    build: .
+    container_name: joplin-api
+    ports:
+      - "41185:41185"
+    volumes:
+      - joplin-profile:/data/joplin-profile
+    env_file:
+      - .env
+    restart: unless-stopped
+
+volumes:
+  joplin-profile:
