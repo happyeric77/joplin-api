@@ -15,7 +15,7 @@ SYNC_PASS="${JOPLIN_WEBDAV_PASS:?JOPLIN_WEBDAV_PASS is required}"
 API_TOKEN="${JOPLIN_API_TOKEN:?JOPLIN_API_TOKEN is required}"
 SYNC_INTERVAL="${JOPLIN_SYNC_INTERVAL:-2}"
 
-mkdir -p "${PROFILE_DIR}"
+mkdir -p "${PROFILE_DIR}" /var/log/joplin
 
 ${JOPLIN} config sync.target 6          >/dev/null 2>&1
 ${JOPLIN} config sync.6.path "${SYNC_URL}"     >/dev/null 2>&1
