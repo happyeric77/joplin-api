@@ -10,26 +10,21 @@ Run [Joplin](https://joplinapp.org/) in headless mode as a REST API server, with
 ┌─────────────────────────────────────────────────┐
 │                  joplin-api                      │
 │                                                  │
-│  ┌──────────────┐    ┌──────────────────────┐   │
-│  │  Joplin CLI   │◄──►│   socat proxy        │   │
-│  │  (127.0.0.1   │    │   (0.0.0.0:41185)   │   │
-│  │   :41184)     │    │                      │   │
-│  └──────┬───────┘    └──────────┬───────────┘   │
-│         │                        │               │
-│  ┌──────▼───────┐               │               │
-│  │  cron sync    │               │               │
-│  │  (flock lock) │               │               │
-│  └──────┬───────┘               │               │
-│         │                        │               │
-└─────────┼────────────────────────┼───────────────┘
-          │                        │
-          ▼                        ▼
-   ┌──────────────┐      ┌────────────────┐
-   │  WebDAV       │      │  REST API      │
-   │  (Synology)   │      │  /ping         │
-   └──────────────┘      │  /notes        │
-                          │  /folders      │
-                          └────────────────┘
+│  ┌──────────────────────────────────────────┐    │
+│  │       Joplin CLI (Headless)               │    │
+│  │       Data API on 0.0.0.0:41184           │    │
+│  │       + event-driven sync loop            │    │
+│  └────────┬────────────────────────┬─────────┘    │
+│           │                        │              │
+└───────────┼────────────────────────┼──────────────┘
+            │                        │
+            ▼                        ▼
+     ┌──────────────┐      ┌────────────────┐
+     │  REST API     │      │  WebDAV        │
+     │  /ping        │      │  (Synology)    │
+     │  /notes       │      └────────────────┘
+     │  /folders     │
+     └──────────────┘
 ```
 
 ## Features
@@ -37,7 +32,7 @@ Run [Joplin](https://joplinapp.org/) in headless mode as a REST API server, with
 - **Headless Joplin** — Run Joplin without GUI, perfect for servers and containers
 - **REST API** — Full access to Joplin Data API (notes, folders, tags, resources)
 - **WebDAV Sync** — Periodic sync to WebDAV-compatible storage (Synology, Nextcloud, etc.)
-- **Sync Lock** — Uses `flock` to prevent overlapping sync operations
+- **Event-Driven Sync** — Polls Joplin for changes and syncs to WebDAV with configurable debounce
 - **ARM64 Support** — Built on `node:22-slim`, works on Raspberry Pi, Apple Silicon, and x86
 
 ## Quick Start
@@ -45,36 +40,67 @@ Run [Joplin](https://joplinapp.org/) in headless mode as a REST API server, with
 ### Using docker-compose (recommended)
 
 1. Clone the repo:
+
 ```bash
 git clone https://github.com/happyeric77/joplin-api.git
 cd joplin-api
 ```
 
 2. Create your `.env` file:
+
 ```bash
 cp .env.example .env
 # Edit .env with your WebDAV credentials
 ```
 
-3. Start the server:
-```bash
-docker-compose up -d
-```
+3. Start the server — choose one option:
+
+   **Option A: Build locally** (default)
+
+   ```bash
+   docker-compose up -d
+   ```
+
+   **Option B: Use the prebuilt image**
+   Edit `docker-compose.yml` to replace `build: .` with `image: ghcr.io/happyeric77/joplin-api:latest`, then:
+
+   ```bash
+   docker-compose up -d
+   ```
 
 4. Verify it's running:
+
 ```bash
-curl http://localhost:41185/ping
+curl http://localhost:41184/ping
 # Should return: JoplinClipperServer
 ```
 
-### Using docker run
+### Using the prebuilt image (GHCR)
+
+Skip the local build and pull directly from GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/happyeric77/joplin-api:latest
+
+docker run -d \
+  --name joplin-api \
+  -p 41184:41184 \
+  -v joplin-profile:/data/joplin-profile \
+  -e JOPLIN_WEBDAV_URL="https://your-synology:5006/remote.php/dav/files/user/Notes" \
+  -e JOPLIN_WEBDAV_USER="your-username" \
+  -e JOPLIN_WEBDAV_PASS="your-password" \
+  -e JOPLIN_API_TOKEN="your-api-token" \
+  ghcr.io/happyeric77/joplin-api:latest
+```
+
+### Building and running locally
 
 ```bash
 docker build -t joplin-api .
 
 docker run -d \
   --name joplin-api \
-  -p 41185:41185 \
+  -p 41184:41184 \
   -v joplin-profile:/data/joplin-profile \
   -e JOPLIN_WEBDAV_URL="https://your-synology:5006/remote.php/dav/files/user/Notes" \
   -e JOPLIN_WEBDAV_USER="your-username" \
@@ -85,28 +111,31 @@ docker run -d \
 
 ## Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `JOPLIN_WEBDAV_URL` | Yes | — | WebDAV server URL for sync |
-| `JOPLIN_WEBDAV_USER` | Yes | — | WebDAV username |
-| `JOPLIN_WEBDAV_PASS` | Yes | — | WebDAV password |
-| `JOPLIN_API_TOKEN` | Yes | — | Token for Joplin Data API authentication |
-| `JOPLIN_API_PORT` | No | `41184` | Internal Joplin API port (don't change unless you know what you're doing) |
-| `JOPLIN_SYNC_INTERVAL` | No | `1` | Sync interval in minutes |
+| Variable                                | Required | Default                | Description                                                                             |
+| --------------------------------------- | -------- | ---------------------- | --------------------------------------------------------------------------------------- |
+| `JOPLIN_WEBDAV_URL`                     | Yes      | —                      | WebDAV server URL for sync                                                              |
+| `JOPLIN_WEBDAV_USER`                    | Yes      | —                      | WebDAV username                                                                         |
+| `JOPLIN_WEBDAV_PASS`                    | Yes      | —                      | WebDAV password                                                                         |
+| `JOPLIN_API_TOKEN`                      | Yes      | —                      | Token for Joplin Data API authentication                                                |
+| `JOPLIN_PROFILE_DIR`                    | No       | `/data/joplin-profile` | Joplin profile/data directory                                                           |
+| `JOPLIN_SYNC_INTERVAL`                  | No       | `10`                   | Legacy sync interval in minutes (overridden by `JOPLIN_PERIODIC_SYNC_INTERVAL_SECONDS`) |
+| `JOPLIN_PERIODIC_SYNC_INTERVAL_SECONDS` | No       | —                      | Periodic sync interval in seconds (overrides legacy `JOPLIN_SYNC_INTERVAL`)             |
+| `JOPLIN_EVENT_POLL_INTERVAL_SECONDS`    | No       | `15`                   | Seconds between event polls                                                             |
+| `JOPLIN_EVENT_SYNC_DEBOUNCE_SECONDS`    | No       | `30`                   | Debounce window before triggering sync after events are detected                        |
 
 ## API Usage
 
-Once running, access the Joplin Data API through the proxy port (41185):
+Once running, access the Joplin Data API on port 41184:
 
 ```bash
 # Health check
-curl http://localhost:41185/ping
+curl http://localhost:41184/ping
 
 # List notes
-curl "http://localhost:41185/notes?token=your-api-token"
+curl "http://localhost:41184/notes?token=your-api-token"
 
 # Create a note
-curl -X POST "http://localhost:41185/notes?token=your-api-token" \
+curl -X POST "http://localhost:41184/notes?token=your-api-token" \
   -H "Content-Type: application/json" \
   -d '{"title": "Hello", "body": "World"}'
 ```
@@ -122,8 +151,6 @@ This image is designed for Kubernetes deployments with:
 - **ClusterIP Service** for internal access
 - **NetworkPolicy** for restricted access
 
-See [k3s-homelab](https://github.com/happyeric77/k3s-homelab) for GitOps manifests.
-
 ## Development
 
 ### Build the image
@@ -132,7 +159,7 @@ See [k3s-homelab](https://github.com/happyeric77/k3s-homelab) for GitOps manifes
 docker build --platform linux/arm64 -t joplin-api:local .
 ```
 
-### Run tests
+### Manual smoke test
 
 ```bash
 # Start the server
@@ -142,7 +169,7 @@ docker-compose up -d
 sleep 5
 
 # Test API
-curl http://localhost:41185/ping
+curl http://localhost:41184/ping
 # Expected: JoplinClipperServer
 
 # Cleanup
